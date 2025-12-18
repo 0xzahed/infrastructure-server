@@ -35,7 +35,7 @@ try {
 // Middleware
 app.use(
   cors({
-    origin: ["http://localhost:5173", "http://localhost:5174"],
+    origin: ["http://localhost:3000"],
     credentials: true,
   })
 );
@@ -111,7 +111,7 @@ async function ensureDB(req, res, next) {
 
 // Middleware: Verify Firebase Token
 async function verifyToken(req, res, next) {
-  // Skip verification if Firebase not initialized (local development)
+ 
   if (!firebaseInitialized) {
     req.user = { email: "test@example.com" };
     return next();
@@ -166,7 +166,6 @@ async function verifyStaff(req, res, next) {
   }
 }
 
-// ==================== USER ROUTES ====================
 
 // Create/Update User (Registration)
 app.post("/users", ensureDB, async (req, res) => {
@@ -246,8 +245,6 @@ app.patch("/users/:email", ensureDB, verifyToken, async (req, res) => {
   }
 });
 
-// ==================== ISSUE ROUTES ====================
-
 // Create Issue (Report Issue)
 app.post("/issues", ensureDB, verifyToken, async (req, res) => {
   try {
@@ -294,8 +291,10 @@ app.post("/issues", ensureDB, verifyToken, async (req, res) => {
       status: "pending",
       priority: "normal",
       upvotes: 0,
+      isBoosted: false,
       assignedTo: null,
       assignedToName: null,
+      assignedStaff: null,
       createdAt: new Date(),
       updatedAt: new Date(),
       resolvedAt: null,
@@ -994,6 +993,11 @@ app.patch(
           $set: {
             assignedTo: staff.email,
             assignedToName: staff.name,
+            assignedStaff: {
+              email: staff.email,
+              name: staff.name,
+              photoURL: staff.photoURL,
+            },
             status: "in-progress",
             updatedAt: new Date(),
           },
@@ -1003,6 +1007,50 @@ app.patch(
 
       res.status(200).json({ message: "Issue assigned successfully" });
     } catch (error) {
+      res.status(500).json({ message: "Server error" });
+    }
+  }
+);
+
+// Reject Issue (Admin)
+app.patch(
+  "/admin/issues/:id/reject",
+  ensureDB,
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const id = req.params.id;
+
+      const issue = await issuesCollection.findOne({ _id: new ObjectId(id) });
+      if (!issue) {
+        return res.status(404).json({ message: "Issue not found" });
+      }
+
+      if (issue.status !== "pending") {
+        return res.status(400).json({ message: "Only pending issues can be rejected" });
+      }
+
+      const timelineEntry = {
+        status: "rejected",
+        date: new Date(),
+        note: "Issue rejected by admin",
+      };
+
+      await issuesCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            status: "rejected",
+            updatedAt: new Date(),
+          },
+          $push: { timeline: timelineEntry },
+        }
+      );
+
+      res.status(200).json({ message: "Issue rejected successfully" });
+    } catch (error) {
+      console.error("Reject error:", error);
       res.status(500).json({ message: "Server error" });
     }
   }
