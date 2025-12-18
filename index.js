@@ -111,7 +111,6 @@ async function ensureDB(req, res, next) {
 
 // Middleware: Verify Firebase Token
 async function verifyToken(req, res, next) {
- 
   if (!firebaseInitialized) {
     req.user = { email: "test@example.com" };
     return next();
@@ -165,7 +164,6 @@ async function verifyStaff(req, res, next) {
     return res.status(500).json({ message: "Server error" });
   }
 }
-
 
 // Create/Update User (Registration)
 app.post("/users", ensureDB, async (req, res) => {
@@ -1028,7 +1026,9 @@ app.patch(
       }
 
       if (issue.status !== "pending") {
-        return res.status(400).json({ message: "Only pending issues can be rejected" });
+        return res
+          .status(400)
+          .json({ message: "Only pending issues can be rejected" });
       }
 
       const timelineEntry = {
