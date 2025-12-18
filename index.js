@@ -7,17 +7,10 @@ const admin = require("firebase-admin");
 const app = express();
 const port = process.env.PORT || 3000;
 
-// CORS configuration - allow requests from your frontend
-app.use(cors({
-  origin: ['http://localhost:5173', 'https://your-frontend-domain.vercel.app'],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
+app.use(cors());
 app.use(express.json());
 
-// Initialize Firebase only if service key is provided
+
 let firebaseInitialized = false;
 try {
   if (process.env.FB_SERVICE_KEY) {
@@ -79,11 +72,11 @@ async function run() {
     await client.db("admin").command({ ping: 1 });
     console.log("✅ Successfully connected to MongoDB!");
 
-    const db = client.db("citywatch_db");
+    const db = client.db("CityWatch");
     const users = db.collection("users");
     const issues = db.collection("issues");
 
-    console.log("Database: citywatch_db");
+    console.log("Database: CityWatch");
     console.log("Collections: users, issues");
 
     app.post("/users", async (req, res) => {
@@ -163,7 +156,7 @@ async function run() {
       const issue = {
         ...req.body,
         citizenEmail: req.email,
-        citizenName: user.displayName || user.email.split("@")[0], // ADD THIS LINE
+        citizenName: user.displayName || user.email.split("@")[0], 
         status: "Pending",
         priority: "Normal",
         upvotes: 0,
