@@ -35,7 +35,13 @@ try {
 // Middleware
 app.use(
   cors({
-    origin: ["http://localhost:3000"],
+    origin: [
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "http://localhost:3000",
+      "https://citywatch-6f44b.web.app",
+      "https://citywatch-6f44b.firebaseapp.com",
+    ],
     credentials: true,
   })
 );
@@ -168,7 +174,7 @@ async function verifyStaff(req, res, next) {
 // Create/Update User (Registration)
 app.post("/users", ensureDB, async (req, res) => {
   try {
-    const { email, name, photoURL, phoneNumber } = req.body;
+    const { email, displayName, name, photoURL, phoneNumber } = req.body;
 
     const existingUser = await usersCollection.findOne({ email });
 
@@ -178,7 +184,7 @@ app.post("/users", ensureDB, async (req, res) => {
 
     const newUser = {
       email,
-      name,
+      name: displayName || name,
       photoURL: photoURL || null,
       phoneNumber: phoneNumber || null,
       role: "citizen",
@@ -286,6 +292,8 @@ app.post("/issues", ensureDB, verifyToken, async (req, res) => {
       image: image || null,
       reportedBy: user.email,
       reportedByName: user.name,
+      citizenEmail: user.email,
+      citizenName: user.name,
       status: "pending",
       priority: "normal",
       upvotes: 0,
@@ -346,22 +354,6 @@ app.get("/issues", ensureDB, async (req, res) => {
   }
 });
 
-// Get Single Issue by ID
-app.get("/issues/:id", ensureDB, async (req, res) => {
-  try {
-    const id = req.params.id;
-    const issue = await issuesCollection.findOne({ _id: new ObjectId(id) });
-
-    if (!issue) {
-      return res.status(404).json({ message: "Issue not found" });
-    }
-
-    res.status(200).json(issue);
-  } catch (error) {
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
 // Get My Issues
 app.get("/issues/my-issues", ensureDB, verifyToken, async (req, res) => {
   try {
@@ -378,6 +370,22 @@ app.get("/issues/my-issues", ensureDB, verifyToken, async (req, res) => {
       .toArray();
 
     res.status(200).json(issues);
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Get Single Issue by ID
+app.get("/issues/:id", ensureDB, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const issue = await issuesCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!issue) {
+      return res.status(404).json({ message: "Issue not found" });
+    }
+
+    res.status(200).json(issue);
   } catch (error) {
     res.status(500).json({ message: "Server error" });
   }
@@ -465,40 +473,125 @@ app.post("/issues/:id/upvote", ensureDB, verifyToken, async (req, res) => {
     const issueId = req.params.id;
     const userEmail = req.user.email;
 
+    console.log("Upvote request:", { issueId, userEmail });
+
+    // Check if issue exists
+    const issue = await issuesCollection.findOne({ _id: new ObjectId(issueId) });
+    if (!issue) {
+      console.log("Issue not found:", issueId);
+      return res.status(404).json({ message: "Issue not found" });
+    }
+
+    // Check if user already upvoted using string issueId (database consistency)
     const existingUpvote = await upvotesCollection.findOne({
-      issueId,
+      issueId: issueId,
       userEmail,
     });
 
+    console.log("Existing upvote check:", existingUpvote);
+
     if (existingUpvote) {
-      return res.status(400).json({ message: "Already upvoted" });
+      return res.status(400).json({ 
+        message: "Already upvoted",
+        alreadyUpvoted: true 
+      });
     }
 
+    // Insert upvote
     await upvotesCollection.insertOne({
-      issueId,
+      issueId: issueId,
       userEmail,
       createdAt: new Date(),
     });
 
-    const upvoteCount = await upvotesCollection.countDocuments({ issueId });
+    // Count upvotes for this issue
+    const upvoteCount = await upvotesCollection.countDocuments({ 
+      issueId: issueId 
+    });
 
     // Update priority based on upvotes
     let priority = "normal";
     if (upvoteCount >= 10) priority = "high";
     else if (upvoteCount >= 5) priority = "medium";
 
+    // Update issue with ObjectId
     await issuesCollection.updateOne(
       { _id: new ObjectId(issueId) },
       {
         $set: { upvotes: upvoteCount, priority },
-        $inc: { upvotes: 1 },
       }
     );
+
+    console.log("Upvote successful:", { issueId, upvoteCount });
 
     res
       .status(200)
       .json({ message: "Upvoted successfully", upvotes: upvoteCount });
   } catch (error) {
+    console.error("Upvote error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+});
+
+// Remove Upvote
+app.delete("/issues/:id/upvote", ensureDB, verifyToken, async (req, res) => {
+  try {
+    const issueId = req.params.id;
+    const userEmail = req.user.email;
+
+    // Remove upvote
+    const result = await upvotesCollection.deleteOne({
+      issueId: issueId,
+      userEmail,
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(400).json({ message: "You haven't upvoted this issue" });
+    }
+
+    // Recalculate upvotes
+    const upvoteCount = await upvotesCollection.countDocuments({ 
+      issueId: issueId 
+    });
+
+    // Update priority based on upvotes
+    let priority = "normal";
+    if (upvoteCount >= 10) priority = "high";
+    else if (upvoteCount >= 5) priority = "medium";
+
+    // Update issue
+    await issuesCollection.updateOne(
+      { _id: new ObjectId(issueId) },
+      {
+        $set: { upvotes: upvoteCount, priority },
+      }
+    );
+
+    res
+      .status(200)
+      .json({ message: "Upvote removed successfully", upvotes: upvoteCount });
+  } catch (error) {
+    console.error("Remove upvote error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Check if user has upvoted
+app.get("/issues/:id/upvote-status", ensureDB, verifyToken, async (req, res) => {
+  try {
+    const issueId = req.params.id;
+    const userEmail = req.user.email;
+
+    const existingUpvote = await upvotesCollection.findOne({
+      issueId: issueId,
+      userEmail,
+    });
+
+    res.status(200).json({ 
+      hasUpvoted: !!existingUpvote 
+    });
+  } catch (error) {
+    console.error("Upvote status error:", error);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -679,6 +772,7 @@ app.patch(
         status,
         date: new Date(),
         note: note || `Status changed to ${status}`,
+        updatedBy: req.userDoc.name,
       };
 
       await issuesCollection.updateOne(
@@ -991,12 +1085,12 @@ app.patch(
           $set: {
             assignedTo: staff.email,
             assignedToName: staff.name,
+            assignedStaffName: staff.name,
             assignedStaff: {
               email: staff.email,
               name: staff.name,
               photoURL: staff.photoURL,
             },
-            status: "in-progress",
             updatedAt: new Date(),
           },
           $push: { timeline: timelineEntry },
@@ -1108,6 +1202,12 @@ app.get(
 // Create Payment Intent (Stripe)
 app.post("/create-payment-intent", ensureDB, verifyToken, async (req, res) => {
   try {
+    if (!stripe) {
+      return res.status(500).json({
+        message: "Payment service is not configured",
+      });
+    }
+
     const { amount } = req.body;
 
     const paymentIntent = await stripe.paymentIntents.create({
